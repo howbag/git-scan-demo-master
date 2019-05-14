@@ -1,0 +1,271 @@
+plugins {
+    id "java"
+    id "org.springframework.boot" version "2.0.4.RELEASE"
+    id "io.spring.dependency-management" version "1.0.6.RELEASE"
+    id 'io.franzbecker.gradle-lombok' version '1.14'
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+
+    id 'jacoco'
+    id "org.sonarqube" version "2.6"
+
+    id "org.ajoberstar.grgit" version "3.0.0-beta.1"
+    id "com.jfrog.artifactory" version "4.7.5"
+}
+
+version "${versionSnapshot}".endsWith('-SNAPSHOT') ? "${versionBase}-" + gitBranch() + "${versionSnapshot}" : "${versionBase}${versionSnapshot}"
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.boot:spring-boot-dependencies:2.0.4.RELEASE"
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:Finchley.RELEASE"
+        mavenBom "org.springframework.data:spring-data-releasetrain:Kay-RELEASE"
+    }
+}
+
+repositories {
+    // UDN artifactory server contains jcenter -- but current artifactory server is 5-10 times slower!
+    jcenter()
+// [dany] THIS IS USUALLY ENABLED IN OUR ENV
+//    maven {
+//        url = "${artifactory_url}"
+//        credentials {
+//            username = "${artifactory_user}"
+//            password = "${artifactory_password}"
+//        }
+//    }
+}
+
+dependencies {
+    implementation "org.springframework.cloud:spring-cloud-commons"
+    implementation "org.springframework.boot:spring-boot"
+    implementation "org.springframework:spring-beans"
+    implementation "org.springframework:spring-web"
+    implementation "org.springframework:spring-context"
+    implementation "org.springframework.security:spring-security-crypto"
+    implementation "org.springframework.retry:spring-retry"
+
+    implementation "org.apache.commons:commons-collections4:4.2"
+    implementation "org.apache.commons:commons-lang3:3.8"
+    implementation "org.apache.httpcomponents:httpcore:4.4.10"
+    implementation "org.apache.httpcomponents:httpclient:4.5.6"
+    implementation "commons-io:commons-io:2.6"
+    implementation "commons-beanutils:commons-beanutils:1.9.3"
+    implementation "javax.validation:validation-api:2.0.1.Final"
+    implementation "org.slf4j:slf4j-api:1.7.25"
+    implementation "org.projectlombok:lombok:1.18.2"
+    implementation "org.passay:passay:1.3.1"
+    implementation "com.fasterxml.jackson.core:jackson-core:2.9.6"
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.9.6"
+    implementation "com.google.guava:guava:26.0-jre"
+
+    testImplementation "org.springframework.boot:spring-boot-starter-test"
+    testImplementation "org.springframework.boot:spring-boot-starter-web"
+    testImplementation "org.springframework.boot:spring-boot-starter-webflux"
+    testImplementation "org.springframework.cloud:spring-cloud-starter-netflix-eureka-client"
+
+    testImplementation "org.junit.jupiter:junit-jupiter-api:5.3.0"
+    testImplementation "org.junit.jupiter:junit-jupiter-engine:5.3.0"
+    testImplementation "org.junit.jupiter:junit-jupiter-params:5.3.0"
+
+    testImplementation "org.assertj:assertj-parent-pom:2.2.1"
+    testImplementation "de.flapdoodle.embed:de.flapdoodle.embed.mongo:2.1.1"
+
+}
+
+
+wrapper {
+    // update also src/main/jenkins/Jenkinsfile to use same version
+    gradleVersion = '4.10'
+    distributionType = Wrapper.DistributionType.ALL
+}
+
+bootJar {
+    //warning diff from bootJar and jar is important
+    //bootJar - Assembles an executable jar archive containing the main classes and their dependencies.
+    //jar     - Assembles a jar archive containing the main classes. (e.g. a library)
+
+    enabled = false
+}
+
+jar {
+    enabled = true
+    manifest {
+        attributes 'Build-Timestamp': new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").format(new Date()),
+                'Build-Revision': gitLastCommitId(), // versioning.info.commit,
+                'Build-Jdk': "${System.properties['java.version']} (${System.properties['java.vendor']} ${System.properties['java.vm.version']})",
+                'Build-OS': "${System.properties['os.name']} ${System.properties['os.arch']} ${System.properties['os.version']}",
+                'Name': project.group.replaceAll('\\.', '/') + '/' + project.name,
+                'Implementation-Title': project.description,
+                'Implementation-Version': project.version,
+                'Implementation-Vendor': "Us by us",
+                'Created-By': "Gradle ${gradle.gradleVersion}"
+    }
+}
+
+
+test {
+    useJUnitPlatform() // all test
+    systemProperty "de.flapdoodle.embed.io.tmpdir", "/tmp"
+    testLogging {
+        exceptionFormat = 'full'
+        events "passed", "skipped", "failed"
+        // showStandardStreams = true  // is a shot for events "standard_out", "standard_error" ... (note showStandardStreams must be after events in this case)
+    }
+    afterSuite { desc, result ->
+        if (!desc.parent) {
+            println "\nTest result: ${result.resultType}"
+            println "Test summary: ${result.testCount} tests, " +
+                    "${result.successfulTestCount} succeeded, " +
+                    "${result.failedTestCount} failed, " +
+                    "${result.skippedTestCount} skipped"
+        }
+    }
+    reports {
+        junitXml.enabled = true
+        html.enabled = true
+    }
+}
+
+test.onlyIf {
+    !Boolean.getBoolean('skip.tests')
+}
+
+sonarqube {
+    properties {
+        property 'sonar.coverage.exclusions', "**/generated/v*/**"
+        property 'sonar.cpd.exclusions', "**/generated/v*/**"
+    }
+}
+
+jacoco {
+    toolVersion = "0.8.1"
+    //reportsDir = file("$buildDir/customJacocoReportDir") default $buildDir/reports/jacoco 
+}
+
+jacocoTestReport {
+    reports {
+        xml.enabled true
+        csv.enabled false
+        html.destination file("${buildDir}/jacocoHtml")
+    }
+}
+
+jacocoTestCoverageVerification {
+    violationRules {
+        rule {
+            limit {
+                minimum = 0.5
+            }
+        }
+
+        rule {
+            enabled = false
+            element = 'CLASS'
+            includes = ['org.gradle.*']
+
+            limit {
+                counter = 'LINE'
+                value = 'TOTALCOUNT'
+                maximum = 0.3
+            }
+        }
+    }
+}
+
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+tasks.withType(Javadoc) {
+    options.encoding = 'UTF-8'
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+// [dany] THIS IS USUALLY ENABLED IN OUR ENV
+//artifactory {
+//    contextUrl = "${artifactory_url}"   //The base Artifactory URL if not overridden by the publisher/resolver
+//
+//
+//    publish {
+//        repository {
+//            repoKey = version.contains('SNAPSHOT') ? "${artifactory_repo_name_dev}" : "${artifactory_repo_name_release}"
+//            //repoKey = "${artifactory_repo_name_dev}"
+//
+//            maven = true
+//            username = "${artifactory_user}"
+//            password = "${artifactory_password}"
+//        }
+//        defaults {
+//            publications('mavenJava') // see publishing/publications/mavenJava
+//        }
+//        publishBuildInfo = true
+//        publishArtifacts = true
+//        publishPom = true
+//    }
+//    resolve {
+//        repository {
+//            repoKey = version.contains('SNAPSHOT') ? "${artifactory_repo_name_dev}" : "${artifactory_repo_name_release}"
+//            //repoKey = "${artifactory_repo_name_dev}"
+//            maven = true
+//            username = "${artifactory_user}"
+//            password = "${artifactory_password}"
+//
+//        }
+//    }
+//}
+
+publishing {
+    // deprecated see ./gradlew --warning-mode all
+
+    publications {
+
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId project.group
+            artifactId project.name
+            artifact(sourcesJar) {
+                classifier = 'sources'
+            }
+            artifact tasks.javadocJar
+        }
+
+    }
+}
+
+def gitLastCommitDate() {
+    def latestCommitDate = gitLastCommit().date
+    println latestCommitDate.format('yyyy-MM-dd_HH-mm')
+}
+
+def gitLastCommitId() {
+    return gitLastCommit().id
+}
+
+def gitLastCommit() {
+    return grgit.log(maxCommits: 1).get(0)
+}
+
+def gitBranch() {
+    def brachName = grgit.branch.current().name.toString();
+    // return git branch; keep only letter/numbers sequence ( branch name test/fx will become testfx )
+    def brachNameTrim = brachName.replaceAll("[^A-Za-z0-9]", "")
+    if (brachName == brachNameTrim) {
+        project.logger.info('gitBranch = {}', brachNameTrim, brachName)
+    } else {
+        project.logger.warn('gitBranch = {} from {}', brachNameTrim, brachName)
+    }
+    // grgit.branch.current()
+    // -> org.ajoberstar.grgit.Branch(refs/heads/dev-feature1, org.ajoberstar.grgit.Branch(refs/remotes/origin/dev-feature1, null, origin/dev-feature1), dev-feature1)
+    return brachNameTrim
+}
